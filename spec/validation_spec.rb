@@ -1,6 +1,6 @@
 require File.join(File.dirname(__FILE__), "spec_helper")
 
-describe Validation do
+describe SimpleValidation::Validation do
 
   before(:all) do
     class User
@@ -9,12 +9,13 @@ describe Validation do
       end
     end
     
-    @user_validation = Validation.new do |v|
+    @user_validation = SimpleValidation::Validation.new do |v|
       v.complain "Username should be provided", :about => :username, :as => :username_not_blank, :when => Proc.new { |s| s.username.blank? }
       v.complain "Username should be at least 5 characters", :about => :username, :as => :username_min_length, :when => Proc.new { |s| s.username.length < 5 }
+      v.depends(:username_min_length, :username_not_blank)
+      
       v.complain "E-mail should be provided", :about => :email, :as => :email_not_blank, :when => Proc.new { |s| s.email.blank? }
       v.complain "E-mail should end with @local", :about => :email, :as => :email_domain, :when => Proc.new { |s| s.email.grep(/\@local$/).length == 0 }
-      v.depends(:username_min_length, :username_not_blank)
       v.depends(:email_domain, :email_not_blank)
     end
   end
@@ -62,6 +63,27 @@ describe Validation do
     user.email = "tester@local"
     result = @user_validation.run(user)
     result.length.should == 0
+  end
+  
+  it "should raise error when check self-dependency is added" do
+    lambda {
+      validation = SimpleValidation::Validation.new do |v|
+        v.complain "value must not be 1", :about => :value, :as => :value_not_1, :when => Proc.new { |s| s.value == 1 }
+        v.complain "value must not be 2", :about => :value, :as => :value_not_2, :when => Proc.new { |s| s.value == 2 }
+        v.depends :value_not_1, :value_not_1
+      end
+    }.should raise_error(SimpleValidation::StructureException) { |e| e.message.should == "Cannot depend on self" }
+  end
+  
+  it "should raise error on cyclic check dependency" do
+    lambda {
+      validation = SimpleValidation::Validation.new do |v|
+        v.complain "value must not be 1", :about => :value, :as => :value_not_1, :when => Proc.new { |s| s.value == 1 }
+        v.complain "value must not be 2", :about => :value, :as => :value_not_2, :when => Proc.new { |s| s.value == 2 }
+        v.depends :value_not_2, :value_not_1
+        v.depends :value_not_1, :value_not_2
+      end
+    }.should raise_error(SimpleValidation::StructureException) { |e| e.message.should == "Cannot create cyclic check dependency" }
   end
 
 end
