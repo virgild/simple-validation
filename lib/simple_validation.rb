@@ -15,22 +15,44 @@ module SimpleValidation
   class StructureException < Exception
   end
   
-  class Validation
+  class CheckList
     attr_reader :checks
-
-    def initialize(&block)
+    
+    def initialize
       @checks = Tree::TreeNode.new(:root)
-      block.call(self) if block
+      @check_index = 0
     end
-
-    # Adds a property check
-    def complain(message, options)
-      spec = { :message => message, :as => options[:as], :about => options[:about], :inspector => options[:when] }
-      @checks << Tree::TreeNode.new(options[:as], spec)
-      self
+    
+    def complain(options, &block)
+      message = options[:msg]
+      tag = options[:as] || "check_#{@check_index}".to_sym
+      subject = options[:on]
+      inspector = options[:when]
+      
+      if message # straight complain  
+        check = Check.new(message, inspector, tag, subject)
+        @checks << Tree::TreeNode.new(tag, check)
+        @check_index += 1
+      else # grouped complain
+        @current_subject = subject
+        block.call(self)
+      end
     end
-
-    # Makes a check depend on another one
+    
+    def add(options)
+      message = options[:msg]
+      inspector = options[:when]
+      tag = options[:as] || "check_#{@check_index}".to_sym
+      subject = @current_subject
+      check = Check.new(message, inspector, tag, subject)
+      @checks << Tree::TreeNode.new(tag, check)
+      @check_index += 1
+    end
+    
+    def find_check_node(tag)
+      @checks.find { |node| node.name == tag }
+    end
+    
     def depends(dependent_check, parent_check)
       raise StructureException.new("Cannot depend on self") if dependent_check == parent_check
       
@@ -44,37 +66,53 @@ module SimpleValidation
       dependent_node.removeFromParent!
       parent_node << dependent_node
     end
-
-    # Run the validation against an object
-    def run(subject)
+    
+    def run(bag)
       complaints = Array.new
       @checks.children.each do |node|
-        complaints << run_node(node, subject)
+        complaints << run_node(node, bag)
       end
 
       complaints.flatten
     end
-
-    def find_check_node(name)
-      @checks.find { |node| node.name == name }
-    end
-
-    private
-
-    def run_node(check_node, subject)
+    
+    def run_node(check_node, bag)
       check = check_node.content
       complaints = Array.new
 
-      if check[:inspector].call(subject)
-        complaints << { :message => check[:message], :about => check[:about] }
+      if check.inspector.call(bag)
+        complaints << { :message => check.message, :about => check.subject }
       else
         check_node.children.each do |node|
-          complaints << run_node(node, subject)
+          complaints << run_node(node, bag)
         end
       end
 
       complaints.flatten
     end
-
-  end #class Validation
+    private :run_node
+  end
+  
+  class Check
+    attr_reader :message, :tag, :subject, :inspector
+    def initialize(message, inspector, tag=nil, subject=nil)
+      @tag = tag
+      @message = message
+      @inspector = inspector
+      @subject = subject
+    end
+  end
+  
+  module ClassMethods
+    def make_checklist(&block)
+      checklist = CheckList.new
+      block.call(checklist)
+      checklist
+    end
+  end
+  
+  class << self
+    include ClassMethods
+  end
+  
 end #module SimpleValidation
